@@ -1,0 +1,200 @@
+---
+title: "session08 - homework"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: true
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, tidybayes, brms, bayesplot, bayestestR, modelr)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+#options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+```
+
+# Exercise
+
+We will be re-analyzing the data from @winter2013making.
+
+```{r}
+#| label: preprocessing_sim
+
+# Load our datasets
+sim <- read_csv("../../data/linguistic_similarity.csv") |> 
+  mutate(Sem = as.factor(Sem),
+         Phon = as.factor(Phon))
+sim
+
+```
+
+We will now retrace the original article's complete analysis. In their original analysis, they were interested in whether (a) semantic similarity between cities, (b) phonological similarity between cities, and (c) their interaction affects how close/far apart participants draw the cities.
+
+## (a) Specify Priors
+
+Specify the model formula and appropriate weakly informative priors for all relevant predictors. Contrast-code the predictors.
+
+```{r}
+#| label: model_formula_sim
+
+# define model formula
+sim_formula <- bf(Distance ~ Sem * Phon)
+
+# get priors
+get_prior(sim_formula, sim)
+
+# set contrasts
+contrasts(sim$Sem) <- contr.sum(2)
+contrasts(sim$Phon) <- contr.sum(2)
+
+# check that new contrasts have been applied
+contrasts(sim$Sem)
+contrasts(sim$Phon)
+
+# specify weakly informative priors
+my_priors <- c(prior(normal(74, 34.1), class = "Intercept"),
+               prior(normal(0, 34.1), class = "b", coef = "Phon1"),
+               prior(normal(0, 34.1), class = "b", coef = "Sem1"),
+               prior(normal(0, 34.1), class = "b", coef = "Sem1:Phon1")
+               )
+```
+
+## (b) Run the appropriate model for the research question
+
+```{r}
+#| label: model_sim
+
+# run model
+xmdl_sim <- brm(sim_formula,
+                family = gaussian(),
+                prior = my_priors,
+                data = sim,
+                chains = 4,
+                cores = 4,
+                iter = 2000,
+                warmup = 1000,
+                thin = 1,
+                seed = 21
+                )
+```
+
+## (c) Posterior predicive check
+
+Check the overall model fit with posterior predictive checks. If the model does not fit the data well, fix the problem (check `06_homework_solutions.qmd` for inspiration).
+
+```{r}
+#| label: model_fit
+
+# run post predicative check
+pp_check(xmdl_sim, ndraws = 100)
+
+# fix assumption violation with a gentle square root transform
+sim <- sim |> 
+  mutate(sqrt_dist = sqrt(Distance))
+
+# get priors
+get_prior(sqrt_dist ~ Sem * Phon, sim)
+
+# specify new priors
+my_priors <- c(prior(normal(8.6, 2.5), class = "Intercept"),
+               prior(normal(0, 2.5), class = "b", coef = "Phon1"),
+               prior(normal(0, 2.5), class = "b", coef = "Sem1"),
+               prior(normal(0, 2.5), class = "b", coef = "Sem1:Phon1")
+               )
+
+# run model
+xmdl_sqrt_sim <- brm(sqrt_dist ~ Sem * Phon,
+                family = gaussian(),
+                prior = my_priors,
+                data = sim,
+                chains = 4,
+                cores = 4,
+                iter = 2000,
+                warmup = 1000,
+                thin = 1,
+                seed = 21
+                )
+
+# run post predicative check
+pp_check(xmdl_sqrt_sim, ndraws = 100)
+
+```
+
+## (d) Assess sampling diagnostics
+
+Check that chains are reasonably mixed and that sampling yielded a sufficient number of effective sample size. If there are issues, address them accordingly.
+
+```{r}
+#| label: sampling_diagnostics
+
+# plot Markov chain Monte Carlo (MCMC) simulations
+mcmc_plot(xmdl_sqrt_sim, type = "trace")
+  # trace plots look good
+#plot denisty estimates
+mcmc_dens_overlay(xmdl_sqrt_sim, pars = c("b_Sem1", "b_Phon1", "b_Sem1:Phon1"))
+  # density estimate plots look good
+# check model output
+xmdl_sqrt_sim
+  # Rhat = 1.00 suggests that the chains have converged (i.e., proper convergence of model).
+  # Bulk_ESS (4984 > 400) and Tail_ESS (3055 > 100) are both satisfactory.
+```
+
+## (e) Interpret the results
+
+Now interpret the model relative to the research question and describe uncertainty, visualize posteriors, calculate posterior probabilities of direction, and calculate Bayes Factors for evidence for and against the posterior coefficients being point zero.
+
+(Note: When you want to extract interaction terms like `b_Sem1:Phon1`, you have to put single quotation marks around them because R struggles with interpreting the colon)
+
+```{r}
+#| label: interpret_sim
+
+# extract posterior draws from model
+sim_draws <- xmdl_sqrt_sim |> 
+  spread_draws(b_Intercept, b_Sem1, b_Phon1, `b_Sem1:Phon1`)
+
+# calculate posterior probability
+p_direction(sim_draws)
+```
+
+## (g) Write up your entire analysis:
+
+YOUR WRITE UP HERE
+
+## OPTIONAL (h) compare your interpretation to the original findings
+
+YOUR COMPARISON HERE
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
