@@ -28,7 +28,7 @@ run_if_not_knitting <- function(expr) {
 # nifty code using the pacman package
 # it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(rstudioapi, tidyverse, lme4, brms, bayestestR, bayesplot)
+pacman::p_load(rstudioapi, tidyverse, lme4, brms, bayestestR, bayesplot, tidybayes, modelr)
 
 # set the current working directory to the one where this file is
 run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -155,7 +155,31 @@ mcmc_dens_overlay(xmdl_quant, pars = "b_log_frequency")
   # the density estimate curves for all chains appear to have approximately the same height and   width (like the example in the slides_07), so I assume that they're good
 # check model output
 xmdl_quant
-  # Bulk_ESS = 296 (i.e., > 400) is a bit low
+  # Rhat = 1.01 is acceptable in terms of chain convergence(?). Tail_ESS (638 > 100) looks "safe", but Bulk_ESS (296 < 400) is a bit low.
+
+# increase warmup period to fix low Bulk_ESS
+xmdl_quant <- brm(quant_lmer,
+                  family = gaussian(),
+                  prior = my_priors,
+                  data = quantese,
+                  chains = 4,
+                  cores = 4,
+                  iter = 4000,
+                  warmup = 2000,
+                  thin = 1,
+                  seed = 21
+                  )
+
+# re-run convergence diagnostics
+# re-plot Markov chain Monte Carlo (MCMC) simulations
+mcmc_plot(xmdl_quant, type = "trace")
+  # trace plots still look good
+# re-plot denisty estimates
+mcmc_dens_overlay(xmdl_quant, pars = "b_log_frequency")
+  # density estimate curves still look good
+# check new model output
+xmdl_quant
+  # Rhat = 1.00 suggests that the chains have converged (i.e., proper convergence of model).      Tail_ESS has increased from 638 to 1366, and Bulk_ESS (613 > 400) is no longer too low.
 ```
 
 ### (C) Plot posterior predictions
@@ -165,6 +189,38 @@ Find a way to extract posterior samples from the model for the `Intercept` and t
 ```{r}
 #| label: plot_predictions
 
-# YOUR CODE HERE
+# create data grid with 100 evenly spaced values of continuous predictor
+grid_quant <- quantese |> 
+  data_grid(log_frequency = seq_range(log_frequency, 100))
+
+# extract posterior draws from model
+draws_quant <- xmdl_quant |>
+  spread_draws(b_Intercept, b_log_frequency) |>
+  # evaluate linear predictor at each value of log_frequency
+  crossing(grid_quant) |>
+  group_by(log_frequency) |> 
+  # calculate mean and 95% CrI (seperated into 50%, 80% and 95% intervals)
+  mean_qi(mean = b_Intercept + b_log_frequency * log_frequency,
+          .width = c(.5, .8, .95))
+  
+# plot posterior mean and 95% CrI
+draws_quant |> 
+  ggplot(aes(x = log_frequency, 
+             y = mean, 
+             ymin = .lower, 
+             ymax = .upper)) +
+  geom_lineribbon(color = "white") +
+  scale_fill_brewer(palette = "Purples") +
+  guides(fill = "none") +
+  labs(y = "Predicted log(RT)",
+       x = "log(frequency)",
+       title = "Log frequency predicts response latency",
+       subtitle = "Posterior mean and 95% credible interval") +
+  theme_minimal()
+  
+  
+  
+
+
 
 ```
